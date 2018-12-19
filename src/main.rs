@@ -109,6 +109,7 @@ fn main() {
         .cmd("stop", cancel_clear)
         .cmd("rules", rules)
         .cmd("clear", clear)
+        .cmd("purge", purge)
     );
 
     let my = mysql::Pool::new(sql_url).unwrap();
@@ -287,6 +288,49 @@ command!(clear(_context, message) {
                         let _ = message.channel_id.send_message(|m|
                             m.content("An error occured during deleting messages. Maybe the user hasn't sent messages, or the messages are +14d old?"));
                     },
+                }
+            }
+        },
+
+        Err(_) => {
+
+        },
+    }
+});
+
+
+command!(purge(_context, message, args) {
+    match message.member().unwrap().permissions() {
+        Ok(p) => {
+            if !p.manage_guild() {
+                let _ = message.reply("You must be a guild manager to perform this command");
+            }
+            else {
+                match args.single::<u64>() {
+                    Ok(num) => {
+                        if num <= 100 {
+                            let messages = message.channel_id.messages(|m| m.limit(num)).unwrap();
+                            let r = message.channel_id.delete_messages(messages);
+
+                            match r {
+                                Ok(_) => {
+                                    return Ok(())
+                                },
+
+                                Err(_) => {
+                                    let _ = message.channel_id.send_message(|m|
+                                        m.content("An error occured during deleting messages. Messages may be +14d old."));
+                                },
+                            }
+                        }
+                        else {
+                            let _ = message.reply("Please provide a number less than 100 of messages to clear.");
+                        }
+                    },
+
+                    Err(_) => {
+                        let _ = message.reply("Please provide a number less than 100 of messages to clear.");
+                    }
                 }
             }
         },
