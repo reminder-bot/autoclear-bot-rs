@@ -106,6 +106,8 @@ fn main() {
         .cmd("invite", info)
         .cmd("info", info)
         .cmd("start", autoclear)
+        .cmd("stop", cancel_clear)
+        .cmd("rules", rules)
     );
 
     let my = mysql::Pool::new(sql_url).unwrap();
@@ -158,6 +160,86 @@ command!(autoclear(context, message, args) {
                     }
                     let _ = message.reply(&format!("Autoclearing {} users.", mn.len()));
                 }
+            }
+        },
+
+        Err(_) => {
+
+        },
+    }
+});
+
+
+command!(cancel_clear(context, message) {
+    match message.member().unwrap().permissions() {
+        Ok(p) => {
+            if !p.manage_guild() {
+                let _ = message.reply("You must be a guild manager to perform this command");
+            }
+            else {
+                let c = message.channel_id;
+
+                let data = context.data.lock();
+                let mysql = data.get::<Globals>().unwrap();
+
+                let mn = &message.mentions;
+
+                if mn.len() == 0 {
+                    mysql.prep_exec(r#"DELETE FROM channels WHERE channel = :c AND user IS NULL"#, params!{"c" => c.as_u64()}).unwrap();
+
+                    let _ = message.reply("Global autoclear cancelled on this channel.");
+                }
+                else {
+                    for mention in mn {
+                        mysql.prep_exec(r#"DELETE FROM channels WHERE channel = :c AND user = :u"#, params!{"c" => c.as_u64(), "u" => mention.id.as_u64()}).unwrap();
+                    }
+                    let _ = message.reply(&format!("Autoclear cancelled on {} users.", mn.len()));
+                }
+            }
+        },
+
+        Err(_) => {
+
+        },
+    }
+});
+
+
+command!(rules(context, message) {
+    match message.member().unwrap().permissions() {
+        Ok(p) => {
+            if !p.manage_guild() {
+                let _ = message.reply("You must be a guild manager to perform this command");
+            }
+            else {
+                let c = message.channel_id;
+
+                let data = context.data.lock();
+                let mysql = data.get::<Globals>().unwrap();
+
+                let res = mysql.prep_exec(r#"SELECT user, timeout FROM channels WHERE channel = :c"#, params!{"c" => c.as_u64()}).unwrap();
+
+                let mut out: Vec<String> = vec![];
+
+                for row in res {
+                    let (u_id, t) = mysql::from_row::<(Option<u64>, u32)>(row.unwrap());
+                    match u_id {
+                        Some(u) => {
+                            out.push(format!("**<@{}>**: {}s", u, t));
+                        },
+
+                        None => {
+                            out.insert(0, format!("**GLOBAL**: {}s", t));
+                        },
+                    }
+                }
+
+                let _ = c.send_message(|m| m
+                    .embed(|e| e
+                        .title("Rules")
+                        .description(out.join("\n"))
+                    )
+                );
             }
         },
 
