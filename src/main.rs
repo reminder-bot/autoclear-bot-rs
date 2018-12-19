@@ -108,6 +108,7 @@ fn main() {
         .cmd("start", autoclear)
         .cmd("stop", cancel_clear)
         .cmd("rules", rules)
+        .cmd("clear", clear)
     );
 
     let my = mysql::Pool::new(sql_url).unwrap();
@@ -240,6 +241,53 @@ command!(rules(context, message) {
                         .description(out.join("\n"))
                     )
                 );
+            }
+        },
+
+        Err(_) => {
+
+        },
+    }
+});
+
+
+command!(clear(_context, message) {
+    match message.member().unwrap().permissions() {
+        Ok(p) => {
+            if !p.manage_guild() {
+                let _ = message.reply("You must be a guild manager to perform this command");
+            }
+            else {
+                let messages = message.channel_id.messages(|m| m.limit(100)).unwrap();
+                let tag = match message.mentions.get(0){
+                    Some(o) => o,
+
+                    None => {
+                        let _ = message.reply("Please mention a user to clear messages of.");
+                        return Ok(())
+                    }
+                };
+
+                let mut deletes = vec![];
+
+                for m in messages {
+                    if m.author.id == tag.id {
+                        deletes.push(m.id);
+                    }
+                }
+
+                let r = message.channel_id.delete_messages(deletes);
+
+                match r {
+                    Ok(_) => {
+                        return Ok(())
+                    },
+
+                    Err(_) => {
+                        let _ = message.channel_id.send_message(|m|
+                            m.content("An error occured during deleting messages. Maybe the user hasn't sent messages, or the messages are +14d old?"));
+                    },
+                }
             }
         },
 
