@@ -1,0 +1,26 @@
+[package]
+name = "autoclear-bot"
+version = "0.1.0"
+authors = ["jude-LafiteIII <judewrs@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+dotenv = "0.9.0"
+typemap = "*"
+mysql = "*"
+reqwest = "*"
+
+[dependencies.serenity]
+default-features = false
+features = [
+    "builder",
+    "client",
+    "framework",
+    "gateway",
+    "http",
+    "model",
+    "standard_framework",
+    "utils",
+    "cache",
+]
+version = "0.5"
