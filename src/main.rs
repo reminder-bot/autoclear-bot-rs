@@ -76,14 +76,14 @@ impl EventHandler for Handler {
                         mysql.prep_exec(r#"INSERT INTO deletes (channel, message, `time`) VALUES (:id, :msg, ADDDATE(NOW(), INTERVAL :t SECOND))"#, params!{"id" => c.as_u64(), "msg" => msg.as_u64(), "t" => t}).unwrap();
                     },
 
-                    None => {
-
-                    },
+                    None =>
+                        return (),
                 }
 
             },
 
-            None => return (),
+            None =>
+                return (),
         }
     }
 }
@@ -146,12 +146,17 @@ command!(autoclear(context, message, args) {
                 let mn = &message.mentions;
 
                 if mn.len() == 0 {
+                    mysql.prep_exec(r#"DELETE FROM channels WHERE channel = :c AND user IS NULL"#, params!{"c" => c.as_u64()}).unwrap();
                     mysql.prep_exec(r#"INSERT INTO channels (channel, timeout) VALUES (:c, :t)"#, params!{"c" => c.as_u64(), "t" => timeout}).unwrap();
+
+                    let _ = message.reply("Autoclearing channel.");
                 }
                 else {
                     for mention in mn {
+                        mysql.prep_exec(r#"DELETE FROM channels WHERE channel = :c AND user = :u"#, params!{"c" => c.as_u64(), "u" => mention.id.as_u64()}).unwrap();
                         mysql.prep_exec(r#"INSERT INTO channels (channel, user, timeout) VALUES (:c, :u, :t)"#, params!{"c" => c.as_u64(), "u" => mention.id.as_u64(), "t" => timeout}).unwrap();
                     }
+                    let _ = message.reply(&format!("Autoclearing {} users.", mn.len()));
                 }
             }
         },
