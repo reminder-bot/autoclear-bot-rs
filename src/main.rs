@@ -67,10 +67,20 @@ impl EventHandler for Handler {
 
         match res.next() {
             Some(r) => {
-                let timeout = mysql::from_row::<u32>(r.unwrap());
-                let msg = message.id;
+                let timeout = mysql::from_row::<Option<u32>>(r.unwrap());
 
-                mysql.prep_exec(r#"INSERT INTO deletes (channel, message, `time`) VALUES (:id, :msg, ADDDATE(NOW(), INTERVAL :t SECOND))"#, params!{"id" => c.as_u64(), "msg" => msg.as_u64(), "t" => timeout});
+                match timeout {
+                    Some(t) => {
+                        let msg = message.id;
+
+                        mysql.prep_exec(r#"INSERT INTO deletes (channel, message, `time`) VALUES (:id, :msg, ADDDATE(NOW(), INTERVAL :t SECOND))"#, params!{"id" => c.as_u64(), "msg" => msg.as_u64(), "t" => t}).unwrap();
+                    },
+
+                    None => {
+
+                    },
+                }
+
             },
 
             None => return (),
@@ -95,6 +105,7 @@ fn main() {
         .cmd("help", help)
         .cmd("invite", info)
         .cmd("info", info)
+        .cmd("start", autoclear)
     );
 
     let my = mysql::Pool::new(sql_url).unwrap();
@@ -117,8 +128,30 @@ command!(autoclear(context, message, args) {
                 let _ = message.reply("You must be a guild manager to perform this command");
             }
             else {
-                for arg in args.iter::<String>() {
+                let mut timeout = 10;
 
+                for arg in args.iter::<String>() {
+                    let a = arg.unwrap();
+
+                    if is_numeric(&a) {
+                        timeout = a.parse().unwrap();
+                    }
+                }
+
+                let c = message.channel_id;
+
+                let data = context.data.lock();
+                let mysql = data.get::<Globals>().unwrap();
+
+                let mn = &message.mentions;
+
+                if mn.len() == 0 {
+                    mysql.prep_exec(r#"INSERT INTO channels (channel, timeout) VALUES (:c, :t)"#, params!{"c" => c.as_u64(), "t" => timeout}).unwrap();
+                }
+                else {
+                    for mention in mn {
+                        mysql.prep_exec(r#"INSERT INTO channels (channel, user, timeout) VALUES (:c, :u, :t)"#, params!{"c" => c.as_u64(), "u" => mention.id.as_u64(), "t" => timeout}).unwrap();
+                    }
                 }
             }
         },
@@ -129,6 +162,15 @@ command!(autoclear(context, message, args) {
     }
 });
 
+
+fn is_numeric(s: &String) -> bool {
+    let m = s.matches(char::is_numeric);
+
+    if m.into_iter().count() == s.len() {
+        return true
+    }
+    false
+}
 
 command!(help(_context, message) {
     let _ = message.channel_id.send_message(|m| {
