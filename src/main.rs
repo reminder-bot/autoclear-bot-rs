@@ -63,7 +63,7 @@ impl EventHandler for Handler {
         let data = ctx.data.lock();
         let mysql = data.get::<Globals>().unwrap();
 
-        let mut res = mysql.prep_exec(r#"SELECT MIN(timeout) FROM channels WHERE channel = :id and user is null or user = :u"#, params!{"id" => c.as_u64(), "u" => m}).unwrap();
+        let mut res = mysql.prep_exec(r#"SELECT MIN(timeout) FROM channels WHERE channel = :id AND (user is null OR user = :u)"#, params!{"id" => c.as_u64(), "u" => m}).unwrap();
 
         match res.next() {
             Some(r) => {
@@ -388,6 +388,8 @@ Suggestion Bot is a part of the Fusion Network:
 https://discordbots.org/servers/366542432671760396
 
 Do `~help` for more.
+
+Logo credit: **Font Awesome 2018 CC-BY 4.0**
             ")
         })
     });
