@@ -8,6 +8,7 @@ extern crate reqwest;
 use std::env;
 use serenity::prelude::{Context, EventHandler};
 use serenity::model::gateway::{Game, Ready};
+use serenity::model::event::ChannelPinsUpdateEvent;
 use dotenv::dotenv;
 use typemap::Key;
 use serenity::model::channel::*;
@@ -54,6 +55,18 @@ impl EventHandler for Handler {
         println!("Bot online!");
 
         context.set_game(Game::playing("@Automaid help"));
+    }
+
+    fn channel_pins_update(&self, context: Context, pin: ChannelPinsUpdateEvent) {
+
+        let data = context.data.lock();
+        let mysql = data.get::<Globals>().unwrap();
+
+        for pin in pin.channel_id.pins().unwrap() {
+            let id = pin.id;
+
+            mysql.prep_exec(r#"DELETE FROM deletes WHERE message = :id"#, params!{"id" => id.as_u64()}).unwrap();
+        }
     }
 
     fn message(&self, ctx: Context, message: Message) {
