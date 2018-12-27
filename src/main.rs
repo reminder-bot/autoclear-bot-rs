@@ -395,9 +395,9 @@ command!(info(_context, message) {
         m.embed(|e| {
             e.title("Info")
             .description("
-Invite me: https://discordapp.com/oauth2/authorize?client_id=474240839900725249&scope=bot&permissions=93264
+Invite me: https://discordapp.com/oauth2/authorize?client_id=488060245739044896&scope=bot&permissions=93184
 
-Suggestion Bot is a part of the Fusion Network:
+Automaid is a part of the Fusion Network:
 https://discordbots.org/servers/366542432671760396
 
 Do `~help` for more.
