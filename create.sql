@@ -3,6 +3,7 @@ CREATE TABLE autoclear.channels (
     channel BIGINT UNSIGNED NOT NULL,
     user BIGINT UNSIGNED DEFAULT NULL,
     timeout INT UNSIGNED NOT NULL DEFAULT 10,
+    message TEXT,
 
     PRIMARY KEY (id)
 );

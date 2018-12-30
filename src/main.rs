@@ -71,7 +71,14 @@ impl EventHandler for Handler {
 
     fn message(&self, ctx: Context, message: Message) {
         let c = message.channel_id;
-        let m = message.author.id.as_u64();
+        let user = match message.webhook_id {
+            Some(w) => w.to_webhook().unwrap().user.unwrap(),
+
+            None => message.author,
+        };
+
+        let m = user.id.as_u64();
+
 
         let data = ctx.data.lock();
         let mysql = data.get::<Globals>().unwrap();
@@ -152,8 +159,13 @@ command!(autoclear(context, message, args) {
 
                     if is_numeric(&a) {
                         timeout = a.parse().unwrap();
+                        break;
                     }
                 }
+
+                let to_send = args.rest();
+
+                let msg = if to_send.is_empty() { None } else { Some(to_send) };
 
                 let c = message.channel_id;
 
@@ -164,14 +176,14 @@ command!(autoclear(context, message, args) {
 
                 if mn.len() == 0 {
                     mysql.prep_exec(r#"DELETE FROM channels WHERE channel = :c AND user IS NULL"#, params!{"c" => c.as_u64()}).unwrap();
-                    mysql.prep_exec(r#"INSERT INTO channels (channel, timeout) VALUES (:c, :t)"#, params!{"c" => c.as_u64(), "t" => timeout}).unwrap();
+                    mysql.prep_exec(r#"INSERT INTO channels (channel, timeout, message) VALUES (:c, :t, :m)"#, params!{"c" => c.as_u64(), "t" => timeout, "m" => msg}).unwrap();
 
                     let _ = message.reply("Autoclearing channel.");
                 }
                 else {
                     for mention in mn {
                         mysql.prep_exec(r#"DELETE FROM channels WHERE channel = :c AND user = :u"#, params!{"c" => c.as_u64(), "u" => mention.id.as_u64()}).unwrap();
-                        mysql.prep_exec(r#"INSERT INTO channels (channel, user, timeout) VALUES (:c, :u, :t)"#, params!{"c" => c.as_u64(), "u" => mention.id.as_u64(), "t" => timeout}).unwrap();
+                        mysql.prep_exec(r#"INSERT INTO channels (channel, user, timeout, message) VALUES (:c, :u, :t, :m)"#, params!{"c" => c.as_u64(), "u" => mention.id.as_u64(), "t" => timeout, "m" => msg}).unwrap();
                     }
                     let _ = message.reply(&format!("Autoclearing {} users.", mn.len()));
                 }
@@ -371,6 +383,7 @@ command!(help(_context, message) {
             .description("`autoclear start` - Start autoclearing the current channel. Accepts arguments:
 \t* User mentions (users the clear applies to- if no mentions, will do all users)
 \t* Duration (time in seconds that messages should remain for- defaults to 10s)
+\t* Message (optional, message to send when a message is deleted)
 
 \tE.g `autoclear start @JellyWX#2946 5`
 
