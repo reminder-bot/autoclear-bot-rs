@@ -13,6 +13,7 @@ CREATE TABLE autoclear.deletes (
     channel BIGINT UNSIGNED NOT NULL,
     message BIGINT UNSIGNED NOT NULL,
     `time` DATETIME NOT NULL,
+    to_send TEXT,
 
     PRIMARY KEY (id)
 );

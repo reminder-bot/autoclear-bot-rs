@@ -83,17 +83,17 @@ impl EventHandler for Handler {
         let data = ctx.data.lock();
         let mysql = data.get::<Globals>().unwrap();
 
-        let mut res = mysql.prep_exec(r#"SELECT MIN(timeout) FROM channels WHERE channel = :id AND (user is null OR user = :u)"#, params!{"id" => c.as_u64(), "u" => m}).unwrap();
+        let mut res = mysql.prep_exec(r#"SELECT timeout, message FROM channels WHERE channel = :id AND (user is null OR user = :u) AND timeout = (SELECT MIN(timeout) FROM channels WHERE channel = :id AND (user is null OR user = :u))"#, params!{"id" => c.as_u64(), "u" => m}).unwrap();
 
         match res.next() {
             Some(r) => {
-                let timeout = mysql::from_row::<Option<u32>>(r.unwrap());
+                let (timeout, text) = mysql::from_row::<(Option<u32>, Option<String>)>(r.unwrap());
 
                 match timeout {
                     Some(t) => {
                         let msg = message.id;
 
-                        mysql.prep_exec(r#"INSERT INTO deletes (channel, message, `time`) VALUES (:id, :msg, ADDDATE(NOW(), INTERVAL :t SECOND))"#, params!{"id" => c.as_u64(), "msg" => msg.as_u64(), "t" => t}).unwrap();
+                        mysql.prep_exec(r#"INSERT INTO deletes (channel, message, `time`, to_send) VALUES (:id, :msg, ADDDATE(NOW(), INTERVAL :t SECOND), :text)"#, params!{"id" => c.as_u64(), "msg" => msg.as_u64(), "t" => t, "text" => text}).unwrap();
                     },
 
                     None =>
