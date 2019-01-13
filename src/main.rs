@@ -70,6 +70,16 @@ impl EventHandler for Handler {
     }
 
     fn message(&self, ctx: Context, message: Message) {
+        let mut indiscrim_break = false;
+
+        if message.author.bot {
+            let current = serenity::http::raw::get_current_user().unwrap();
+
+            if message.author.id == current.id && message.content.starts_with("\u{200B}") {
+                indiscrim_break = true;
+            }
+        }
+
         let c = message.channel_id;
         let user = match message.webhook_id {
             Some(w) => w.to_webhook().unwrap().user.unwrap(),
@@ -79,11 +89,16 @@ impl EventHandler for Handler {
 
         let m = user.id.as_u64();
 
-
         let data = ctx.data.lock();
         let mysql = data.get::<Globals>().unwrap();
 
-        let mut res = mysql.prep_exec(r#"SELECT timeout, message FROM channels WHERE channel = :id AND (user is null OR user = :u) AND timeout = (SELECT MIN(timeout) FROM channels WHERE channel = :id AND (user is null OR user = :u))"#, params!{"id" => c.as_u64(), "u" => m}).unwrap();
+        let mut res;
+        if !indiscrim_break {
+            res = mysql.prep_exec(r#"SELECT timeout, message FROM channels WHERE channel = :id AND (user is null OR user = :u) AND timeout = (SELECT MIN(timeout) FROM channels WHERE channel = :id AND (user is null OR user = :u))"#, params!{"id" => c.as_u64(), "u" => m}).unwrap();
+        }
+        else {
+            res = mysql.prep_exec(r#"SELECT timeout, message FROM channels WHERE channel = :id AND user = :u AND timeout = (SELECT MIN(timeout) FROM channels WHERE channel = :id AND user = :u)"#, params!{"id" => c.as_u64(), "u" => m}).unwrap();
+        }
 
         match res.next() {
             Some(r) => {
