@@ -417,7 +417,7 @@ Invite me: https://discordapp.com/oauth2/authorize?client_id=488060245739044896&
 Automaid is a part of the Fusion Network:
 https://discordbots.org/servers/366542432671760396
 
-Do `~help` for more.
+Do `autoclear help` for more.
 
 Logo credit: **Font Awesome 2018 CC-BY 4.0**
             ")
