@@ -143,7 +143,7 @@ fn main() {
         data.insert::<Globals>(my);
     }
 
-    if let Err(e) = client.start() {
+    if let Err(e) = client.start_autosharded() {
         println!("An error occured: {:?}", e);
     }
 }
