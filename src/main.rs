@@ -1,17 +1,53 @@
-#[macro_use] extern crate serenity;
+extern crate serenity;
 #[macro_use] extern crate mysql;
 
 extern crate dotenv;
 extern crate typemap;
 
 use std::env;
+use serenity::client::Client;
 use serenity::prelude::{Context, EventHandler};
-use serenity::model::gateway::{Game, Ready};
-use serenity::model::event::ChannelPinsUpdateEvent;
+use serenity::model::{
+    event::ChannelPinsUpdateEvent,
+    gateway::{
+        Activity,
+        Ready,
+    },
+    channel::{
+        Channel,
+        Message,
+    },
+    permissions::Permissions,
+};
+use serenity::framework::standard::{
+    Args,
+    StandardFramework,
+    CommandResult,
+    macros::{
+        command,
+        group,
+    },
+};
 use dotenv::dotenv;
 use typemap::Key;
-use serenity::model::channel::*;
 
+group!({
+    name: "general",
+    options: {
+        required_permissions: [
+            MANAGE_MESSAGES,
+        ],
+    },
+    commands: [
+        help,
+        info,
+        autoclear,
+        cancel_clear,
+        rules,
+        clear,
+        purge,
+    ],
+});
 
 struct Globals;
 
@@ -23,17 +59,17 @@ struct Handler;
 
 impl EventHandler for Handler {
     fn ready(&self, context: Context, _: Ready) {
-        println!("Bot online!");
+        println!("Bot online now");
 
-        context.set_game(Game::playing("@Automaid help"));
+        context.set_activity(Activity::playing("@Automaid help"));
     }
 
     fn channel_pins_update(&self, context: Context, pin: ChannelPinsUpdateEvent) {
 
-        let data = context.data.lock();
+        let data = context.data.read();
         let mysql = data.get::<Globals>().unwrap();
 
-        for pin in pin.channel_id.pins().unwrap() {
+        for pin in pin.channel_id.pins(&context).unwrap() {
             let id = pin.id;
 
             mysql.prep_exec(r#"DELETE FROM deletes WHERE message = :id"#, params!{"id" => id.as_u64()}).unwrap();
@@ -43,42 +79,54 @@ impl EventHandler for Handler {
     fn message(&self, ctx: Context, message: Message) {
 
         let c = message.channel_id;
-        let user = match message.webhook_id {
-            Some(w) => w.to_webhook().unwrap().user.unwrap(),
 
-            None => message.author,
-        };
+        if let Ok(Channel::Guild(guild_channel)) = c.to_channel(&ctx) {
 
-        let m = user.id.as_u64();
+            let current_user_id = ctx.cache.read().user.id;
+            let guild_channel = guild_channel.read();
 
-        let data = ctx.data.lock();
-        let mysql = data.get::<Globals>().unwrap();
+            let permissions = guild_channel.permissions_for_user(&ctx, current_user_id).unwrap();
 
-        let mut res = mysql.prep_exec(r#"SELECT timeout, message FROM channels WHERE channel = :id AND (user is null OR user = :u) AND timeout = (SELECT MIN(timeout) FROM channels WHERE channel = :id AND (user is null OR user = :u))"#, params!{"id" => c.as_u64(), "u" => m}).unwrap();
+            if permissions.contains(Permissions::MANAGE_WEBHOOKS & Permissions::MANAGE_MESSAGES) {
 
-        match res.next() {
-            Some(r) => {
-                let (timeout, mut text) = mysql::from_row::<(Option<u32>, Option<String>)>(r.unwrap());
+                let user = match message.webhook_id {
+                    Some(w) => w.to_webhook(&ctx).unwrap().user.unwrap(),
 
-                match timeout {
-                    Some(t) => {
-                        let msg = message.id;
+                    None => message.author,
+                };
 
-                        if user.bot {
-                            text = None;
+                let m = user.id.as_u64();
+
+                let data = ctx.data.read();
+                let mysql = data.get::<Globals>().unwrap();
+
+                let mut res = mysql.prep_exec(r#"SELECT timeout, message FROM channels WHERE channel = :id AND (user is null OR user = :u) AND timeout = (SELECT MIN(timeout) FROM channels WHERE channel = :id AND (user is null OR user = :u))"#, params!{"id" => c.as_u64(), "u" => m}).unwrap();
+
+                match res.next() {
+                    Some(r) => {
+                        let (timeout, mut text) = mysql::from_row::<(Option<u32>, Option<String>)>(r.unwrap());
+
+                        match timeout {
+                            Some(t) => {
+                                let msg = message.id;
+
+                                if user.bot {
+                                    text = None;
+                                }
+
+                                mysql.prep_exec(r#"INSERT INTO deletes (channel, message, `time`, to_send) VALUES (:id, :msg, ADDDATE(NOW(), INTERVAL :t SECOND), :text)"#, params!{"id" => c.as_u64(), "msg" => msg.as_u64(), "t" => t, "text" => text}).unwrap();
+                            },
+
+                            None =>
+                                return (),
                         }
 
-                        mysql.prep_exec(r#"INSERT INTO deletes (channel, message, `time`, to_send) VALUES (:id, :msg, ADDDATE(NOW(), INTERVAL :t SECOND), :text)"#, params!{"id" => c.as_u64(), "msg" => msg.as_u64(), "t" => t, "text" => text}).unwrap();
                     },
 
                     None =>
                         return (),
                 }
-
-            },
-
-            None =>
-                return (),
+            }
         }
     }
 }
@@ -90,27 +138,41 @@ fn main() {
     let token = env::var("DISCORD_TOKEN").expect("token");
     let sql_url = env::var("SQL_URL").expect("sql url");
 
-    let mut client = serenity::client::Client::new(&token, Handler).unwrap();
-    client.with_framework(serenity::framework::standard::StandardFramework::new()
-        .configure(|c| c
-            .prefix("autoclear ")
-            .on_mention(true)
-        )
+    let mut client = Client::new(&token, Handler).expect("Failed to create client");
 
-        .cmd("help", help)
-        .cmd("invite", info)
-        .cmd("info", info)
-        .cmd("start", autoclear)
-        .cmd("stop", cancel_clear)
-        .cmd("rules", rules)
-        .cmd("clear", clear)
-        .cmd("purge", purge)
+    let user_id;
+
+    {
+        let http_client = serenity::http::raw::Http::new_with_token(&format!("Bot {}", &token));
+
+        match http_client.get_current_user() {
+            Ok(user) => {
+                user_id = user.id;
+            },
+
+            Err(e) => {
+                println!("{:?}", e);
+                panic!("Failed to get ID of current user. Is token valid?");
+            }
+        }
+    }
+
+    client.with_framework(
+        StandardFramework::new()
+            .configure(|c| c
+                .prefix("autoclear ")
+                .allow_dm(false)
+                .ignore_bots(true)
+                .ignore_webhooks(true)
+                .on_mention(Some(user_id))
+            )
+            .group(&GENERAL_GROUP)
     );
 
     let my = mysql::Pool::new(sql_url).unwrap();
 
     {
-        let mut data = client.data.lock();
+        let mut data = client.data.write();
         data.insert::<Globals>(my);
     }
 
@@ -119,165 +181,154 @@ fn main() {
     }
 }
 
+#[command]
+fn autoclear(context: &mut Context, message: &Message, mut args: Args) -> CommandResult {
+    let mut timeout = 10;
 
-command!(autoclear(context, message, args) {
-    match message.member().unwrap().permissions() {
-        Ok(p) => {
-            if !p.manage_guild() {
-                let _ = message.reply("You must be a guild manager to perform this command");
+    for arg in args.iter::<String>() {
+        let a = arg.unwrap();
+
+        if is_numeric(&a) {
+            timeout = a.parse().unwrap();
+            break;
+        }
+    }
+
+    let to_send = args.rest();
+
+    let msg = if to_send.is_empty() { None } else { Some(to_send) };
+
+    let c = message.channel_id;
+
+    let data = context.data.read();
+    let mysql = data.get::<Globals>().unwrap();
+
+    let mn = &message.mentions;
+
+    if mn.len() == 0 {
+        mysql.prep_exec(r#"DELETE FROM channels WHERE channel = :c AND user IS NULL"#, params!{"c" => c.as_u64()}).unwrap();
+        mysql.prep_exec(r#"INSERT INTO channels (channel, timeout, message) VALUES (:c, :t, :m)"#, params!{"c" => c.as_u64(), "t" => timeout, "m" => msg}).unwrap();
+
+        let _ = message.reply(&context, "Autoclearing channel.");
+    }
+    else {
+        for mention in mn {
+            mysql.prep_exec(r#"DELETE FROM channels WHERE channel = :c AND user = :u"#, params!{"c" => c.as_u64(), "u" => mention.id.as_u64()}).unwrap();
+            mysql.prep_exec(r#"INSERT INTO channels (channel, user, timeout, message) VALUES (:c, :u, :t, :m)"#, params!{"c" => c.as_u64(), "u" => mention.id.as_u64(), "t" => timeout, "m" => msg}).unwrap();
+        }
+        let _ = message.reply(&context, &format!("Autoclearing {} users.", mn.len()));
+    }
+
+    Ok(())
+}
+
+
+#[command]
+fn cancel_clear(context: &mut Context, message: &Message) -> CommandResult {
+    let c = message.channel_id;
+
+    let data = context.data.read();
+    let mysql = data.get::<Globals>().unwrap();
+
+    let mn = &message.mentions;
+
+    if mn.len() == 0 {
+        mysql.prep_exec(r#"DELETE FROM channels WHERE channel = :c AND user IS NULL"#, params!{"c" => c.as_u64()}).unwrap();
+
+        let _ = message.reply(&context, "Global autoclear cancelled on this channel.");
+    }
+    else {
+        for mention in mn {
+            mysql.prep_exec(r#"DELETE FROM channels WHERE channel = :c AND user = :u"#, params!{"c" => c.as_u64(), "u" => mention.id.as_u64()}).unwrap();
+        }
+        let _ = message.reply(&context, &format!("Autoclear cancelled on {} users.", mn.len()));
+    }
+
+    Ok(())
+}
+
+
+#[command]
+fn rules(context: &mut Context, message: &Message) -> CommandResult {
+    let c = message.channel_id;
+
+    let mut out: Vec<String> = vec![];
+
+    {
+        let data = context.data.read();
+        let mysql = data.get::<Globals>().unwrap();
+
+        let res = mysql.prep_exec(r#"SELECT user, timeout FROM channels WHERE channel = :c"#, params!{"c" => c.as_u64()}).unwrap();
+
+        for row in res {
+            let (u_id, t) = mysql::from_row::<(Option<u64>, u32)>(row.unwrap());
+            match u_id {
+                Some(u) => {
+                    out.push(format!("**<@{}>**: {}s", u, t));
+                },
+
+                None => {
+                    out.insert(0, format!("**GLOBAL**: {}s", t));
+                },
             }
-            else {
-                let mut timeout = 10;
+        }
+    }
 
-                for arg in args.iter::<String>() {
-                    let a = arg.unwrap();
+    let _ = c.send_message(context, |m| m
+        .embed(|e| e
+            .title("Rules")
+            .description(out.join("\n"))
+        )
+    );
 
-                    if is_numeric(&a) {
-                        timeout = a.parse().unwrap();
-                        break;
-                    }
-                }
+    Ok(())
+}
 
-                let to_send = args.rest();
 
-                let msg = if to_send.is_empty() { None } else { Some(to_send) };
+#[command]
+fn clear(context: &mut Context, message: &Message) -> CommandResult {
+    let messages = message.channel_id.messages(&context, |m| m.limit(100)).unwrap();
+    let tag = match message.mentions.get(0){
+        Some(o) => o,
 
-                let c = message.channel_id;
+        None => {
+            let _ = message.reply(&context, "Please mention a user to clear messages of.");
+            return Ok(())
+        }
+    };
 
-                let data = context.data.lock();
-                let mysql = data.get::<Globals>().unwrap();
+    let mut deletes = vec![];
 
-                let mn = &message.mentions;
+    for m in messages {
+        if m.author.id == tag.id {
+            deletes.push(m.id);
+        }
+    }
 
-                if mn.len() == 0 {
-                    mysql.prep_exec(r#"DELETE FROM channels WHERE channel = :c AND user IS NULL"#, params!{"c" => c.as_u64()}).unwrap();
-                    mysql.prep_exec(r#"INSERT INTO channels (channel, timeout, message) VALUES (:c, :t, :m)"#, params!{"c" => c.as_u64(), "t" => timeout, "m" => msg}).unwrap();
+    let r = message.channel_id.delete_messages(&context, deletes);
 
-                    let _ = message.reply("Autoclearing channel.");
-                }
-                else {
-                    for mention in mn {
-                        mysql.prep_exec(r#"DELETE FROM channels WHERE channel = :c AND user = :u"#, params!{"c" => c.as_u64(), "u" => mention.id.as_u64()}).unwrap();
-                        mysql.prep_exec(r#"INSERT INTO channels (channel, user, timeout, message) VALUES (:c, :u, :t, :m)"#, params!{"c" => c.as_u64(), "u" => mention.id.as_u64(), "t" => timeout, "m" => msg}).unwrap();
-                    }
-                    let _ = message.reply(&format!("Autoclearing {} users.", mn.len()));
-                }
-            }
+    match r {
+        Ok(_) => {
+            return Ok(())
         },
 
         Err(_) => {
-
+            let _ = message.channel_id.send_message(context, |m|
+                m.content("An error occured during deleting messages. Maybe the user hasn't sent messages, or the messages are +14d old?"));
         },
     }
-});
+
+    Ok(())
+}
 
 
-command!(cancel_clear(context, message) {
-    match message.member().unwrap().permissions() {
-        Ok(p) => {
-            if !p.manage_guild() {
-                let _ = message.reply("You must be a guild manager to perform this command");
-            }
-            else {
-                let c = message.channel_id;
-
-                let data = context.data.lock();
-                let mysql = data.get::<Globals>().unwrap();
-
-                let mn = &message.mentions;
-
-                if mn.len() == 0 {
-                    mysql.prep_exec(r#"DELETE FROM channels WHERE channel = :c AND user IS NULL"#, params!{"c" => c.as_u64()}).unwrap();
-
-                    let _ = message.reply("Global autoclear cancelled on this channel.");
-                }
-                else {
-                    for mention in mn {
-                        mysql.prep_exec(r#"DELETE FROM channels WHERE channel = :c AND user = :u"#, params!{"c" => c.as_u64(), "u" => mention.id.as_u64()}).unwrap();
-                    }
-                    let _ = message.reply(&format!("Autoclear cancelled on {} users.", mn.len()));
-                }
-            }
-        },
-
-        Err(_) => {
-
-        },
-    }
-});
-
-
-command!(rules(context, message) {
-    match message.member().unwrap().permissions() {
-        Ok(p) => {
-            if !p.manage_guild() {
-                let _ = message.reply("You must be a guild manager to perform this command");
-            }
-            else {
-                let c = message.channel_id;
-
-                let data = context.data.lock();
-                let mysql = data.get::<Globals>().unwrap();
-
-                let res = mysql.prep_exec(r#"SELECT user, timeout FROM channels WHERE channel = :c"#, params!{"c" => c.as_u64()}).unwrap();
-
-                let mut out: Vec<String> = vec![];
-
-                for row in res {
-                    let (u_id, t) = mysql::from_row::<(Option<u64>, u32)>(row.unwrap());
-                    match u_id {
-                        Some(u) => {
-                            out.push(format!("**<@{}>**: {}s", u, t));
-                        },
-
-                        None => {
-                            out.insert(0, format!("**GLOBAL**: {}s", t));
-                        },
-                    }
-                }
-
-                let _ = c.send_message(|m| m
-                    .embed(|e| e
-                        .title("Rules")
-                        .description(out.join("\n"))
-                    )
-                );
-            }
-        },
-
-        Err(_) => {
-
-        },
-    }
-});
-
-
-command!(clear(_context, message) {
-    match message.member().unwrap().permissions() {
-        Ok(p) => {
-            if !p.manage_guild() {
-                let _ = message.reply("You must be a guild manager to perform this command");
-            }
-            else {
-                let messages = message.channel_id.messages(|m| m.limit(100)).unwrap();
-                let tag = match message.mentions.get(0){
-                    Some(o) => o,
-
-                    None => {
-                        let _ = message.reply("Please mention a user to clear messages of.");
-                        return Ok(())
-                    }
-                };
-
-                let mut deletes = vec![];
-
-                for m in messages {
-                    if m.author.id == tag.id {
-                        deletes.push(m.id);
-                    }
-                }
-
-                let r = message.channel_id.delete_messages(deletes);
+#[command]
+fn purge(context: &mut Context, message: &Message, mut args: Args) -> CommandResult {
+    match args.single::<u64>() {
+        Ok(num) => {
+            if num <= 100 {
+                let messages = message.channel_id.messages(&context, |m| m.limit(num)).unwrap();
+                let r = message.channel_id.delete_messages(&context, messages);
 
                 match r {
                     Ok(_) => {
@@ -285,61 +336,23 @@ command!(clear(_context, message) {
                     },
 
                     Err(_) => {
-                        let _ = message.channel_id.send_message(|m|
-                            m.content("An error occured during deleting messages. Maybe the user hasn't sent messages, or the messages are +14d old?"));
+                        let _ = message.channel_id.send_message(context, |m|
+                            m.content("An error occured during deleting messages. Messages may be +14d old."));
                     },
                 }
-            }
-        },
-
-        Err(_) => {
-
-        },
-    }
-});
-
-
-command!(purge(_context, message, args) {
-    match message.member().unwrap().permissions() {
-        Ok(p) => {
-            if !p.manage_guild() {
-                let _ = message.reply("You must be a guild manager to perform this command");
             }
             else {
-                match args.single::<u64>() {
-                    Ok(num) => {
-                        if num <= 100 {
-                            let messages = message.channel_id.messages(|m| m.limit(num)).unwrap();
-                            let r = message.channel_id.delete_messages(messages);
-
-                            match r {
-                                Ok(_) => {
-                                    return Ok(())
-                                },
-
-                                Err(_) => {
-                                    let _ = message.channel_id.send_message(|m|
-                                        m.content("An error occured during deleting messages. Messages may be +14d old."));
-                                },
-                            }
-                        }
-                        else {
-                            let _ = message.reply("Please provide a number less than 100 of messages to clear.");
-                        }
-                    },
-
-                    Err(_) => {
-                        let _ = message.reply("Please provide a number less than 100 of messages to clear.");
-                    }
-                }
+                let _ = message.reply(context, "Please provide a number less than 100 of messages to clear.");
             }
         },
 
         Err(_) => {
-
-        },
+            let _ = message.reply(context, "Please provide a number less than 100 of messages to clear.");
+        }
     }
-});
+
+    Ok(())
+}
 
 
 fn is_numeric(s: &String) -> bool {
@@ -351,8 +364,10 @@ fn is_numeric(s: &String) -> bool {
     false
 }
 
-command!(help(_context, message) {
-    let _ = message.channel_id.send_message(|m| {
+
+#[command]
+fn help(context: &mut Context, message: &Message) -> CommandResult {
+    let _ = message.channel_id.send_message(context, |m| {
         m.embed(|e| {
             e.title("Help")
             .description("`autoclear start` - Start autoclearing the current channel. Accepts arguments:
@@ -375,18 +390,20 @@ command!(help(_context, message) {
 \t* User mentions (users to cancel autoclearing for- if no mentions, will do all users)")
         })
     });
-});
+
+    Ok(())
+}
 
 
-command!(info(_context, message) {
-    let _ = message.channel_id.send_message(|m| {
+#[command]
+fn info(context: &mut Context, message: &Message) -> CommandResult {
+    let _ = message.channel_id.send_message(context, |m| {
         m.embed(|e| {
             e.title("Info")
             .description("
 Invite me: https://discordapp.com/oauth2/authorize?client_id=488060245739044896&scope=bot&permissions=93184
 
-Automaid is a part of the Fusion Network:
-https://discordbots.org/servers/366542432671760396
+Join the Discord server: https://discord.jellywx.com/
 
 Do `autoclear help` for more.
 
@@ -394,4 +411,6 @@ Logo credit: **Font Awesome 2018 CC-BY 4.0**
             ")
         })
     });
-});
+
+    Ok(())
+}
