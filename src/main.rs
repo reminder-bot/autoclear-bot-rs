@@ -44,8 +44,6 @@ group!({
         autoclear,
         cancel_clear,
         rules,
-        clear,
-        purge,
     ],
 });
 
@@ -285,76 +283,6 @@ fn rules(context: &mut Context, message: &Message) -> CommandResult {
 }
 
 
-#[command("clear")]
-fn clear(context: &mut Context, message: &Message) -> CommandResult {
-    let messages = message.channel_id.messages(&context, |m| m.limit(100)).unwrap();
-    let tag = match message.mentions.get(0){
-        Some(o) => o,
-
-        None => {
-            let _ = message.reply(&context, "Please mention a user to clear messages of.");
-            return Ok(())
-        }
-    };
-
-    let mut deletes = vec![];
-
-    for m in messages {
-        if m.author.id == tag.id {
-            deletes.push(m.id);
-        }
-    }
-
-    let r = message.channel_id.delete_messages(&context, deletes);
-
-    match r {
-        Ok(_) => {
-            return Ok(())
-        },
-
-        Err(_) => {
-            let _ = message.channel_id.send_message(context, |m|
-                m.content("An error occured during deleting messages. Maybe the user hasn't sent messages, or the messages are +14d old?"));
-        },
-    }
-
-    Ok(())
-}
-
-
-#[command("purge")]
-fn purge(context: &mut Context, message: &Message, mut args: Args) -> CommandResult {
-    match args.single::<u64>() {
-        Ok(num) => {
-            if num <= 100 {
-                let messages = message.channel_id.messages(&context, |m| m.limit(num)).unwrap();
-                let r = message.channel_id.delete_messages(&context, messages);
-
-                match r {
-                    Ok(_) => {
-                        return Ok(())
-                    },
-
-                    Err(_) => {
-                        let _ = message.channel_id.send_message(context, |m|
-                            m.content("An error occured during deleting messages. Messages may be +14d old."));
-                    },
-                }
-            }
-            else {
-                let _ = message.reply(context, "Please provide a number less than 100 of messages to clear.");
-            }
-        },
-
-        Err(_) => {
-            let _ = message.reply(context, "Please provide a number less than 100 of messages to clear.");
-        }
-    }
-
-    Ok(())
-}
-
-
 fn is_numeric(s: &String) -> bool {
     let m = s.matches(char::is_numeric);
 
@@ -376,12 +304,6 @@ fn help(context: &mut Context, message: &Message) -> CommandResult {
 \t* Message (optional, message to send when a message is deleted)
 
 \tE.g `autoclear start @JellyWX#2946 5`
-
-`autoclear clear` - Delete message history of specific users. Accepts arguments:
-\t* User mention (user to clear history of)
-
-`autoclear purge` - Delete message history. Accepts arguments:
-\t* Limit (number of messages to delete)
 
 `autoclear rules` - Check the autoclear rules for specified channels. Accepts arguments:
 \t* Channel mention (channel to view rules of- defaults to current)
