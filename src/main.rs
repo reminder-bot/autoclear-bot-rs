@@ -85,7 +85,9 @@ impl EventHandler for Handler {
 
             let permissions = guild_channel.permissions_for_user(&ctx, current_user_id).unwrap();
 
-            if permissions.contains(Permissions::MANAGE_WEBHOOKS & Permissions::MANAGE_MESSAGES) {
+            if permissions.contains(Permissions::MANAGE_WEBHOOKS) && permissions.contains(Permissions::MANAGE_MESSAGES) {
+
+                dbg!("Permissions valid");
 
                 let user = match message.webhook_id {
                     Some(w) => w.to_webhook(&ctx).unwrap().user.unwrap(),
