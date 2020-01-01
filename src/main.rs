@@ -181,7 +181,7 @@ fn main() {
     }
 }
 
-#[command]
+#[command("start")]
 fn autoclear(context: &mut Context, message: &Message, mut args: Args) -> CommandResult {
     let mut timeout = 10;
 
@@ -223,7 +223,7 @@ fn autoclear(context: &mut Context, message: &Message, mut args: Args) -> Comman
 }
 
 
-#[command]
+#[command("stop")]
 fn cancel_clear(context: &mut Context, message: &Message) -> CommandResult {
     let c = message.channel_id;
 
@@ -248,7 +248,7 @@ fn cancel_clear(context: &mut Context, message: &Message) -> CommandResult {
 }
 
 
-#[command]
+#[command("rules")]
 fn rules(context: &mut Context, message: &Message) -> CommandResult {
     let c = message.channel_id;
 
@@ -285,7 +285,7 @@ fn rules(context: &mut Context, message: &Message) -> CommandResult {
 }
 
 
-#[command]
+#[command("clear")]
 fn clear(context: &mut Context, message: &Message) -> CommandResult {
     let messages = message.channel_id.messages(&context, |m| m.limit(100)).unwrap();
     let tag = match message.mentions.get(0){
@@ -322,7 +322,7 @@ fn clear(context: &mut Context, message: &Message) -> CommandResult {
 }
 
 
-#[command]
+#[command("purge")]
 fn purge(context: &mut Context, message: &Message, mut args: Args) -> CommandResult {
     match args.single::<u64>() {
         Ok(num) => {
