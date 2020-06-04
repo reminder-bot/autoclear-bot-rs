@@ -6,6 +6,6 @@ edition = "2018"
 
 [dependencies]
 dotenv = "0.15"
-serenity = {path = "/home/jude/serenity", features = ["voice", "collector"]}
+serenity = {path = "/home/jude/serenity"}
 sqlx = {version = "0.3.5", default-features = false, features = ["runtime-tokio", "macros", "mysql", "bigdecimal"]}
 tokio = {version = "0.2.19"}
