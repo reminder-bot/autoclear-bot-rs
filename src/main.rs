@@ -1,71 +1,83 @@
-extern crate serenity;
-#[macro_use] extern crate mysql;
+use serenity::{
+    client::{
+        bridge::{
+            gateway::GatewayIntents,
+            voice::ClientVoiceManager,
+        },
+        Client, Context,
+    },
+    framework::standard::{
+        Args, CommandResult, CheckResult, DispatchError, StandardFramework, Reason,
+        macros::{
+            command, group, check, hook,
+        }
+    },
+    model::{
+        channel::{
+            Channel,
+            Message,
+        },
+        event::ChannelPinsUpdateEvent,
+        id::{
+            GuildId,
+            RoleId,
+            UserId,
+        },
+        voice::VoiceState,
+    },
+    prelude::{
+        Mutex as SerenityMutex,
+        *
+    },
+    voice::Handler as VoiceHandler,
+};
 
-extern crate dotenv;
-extern crate typemap;
+use sqlx::{
+    Pool,
+    mysql::{
+        MySqlPool,
+        MySqlConnection,
+    }
+};
+
+use dotenv::dotenv;
 
 use std::env;
-use serenity::client::Client;
-use serenity::prelude::{Context, EventHandler};
-use serenity::model::{
-    event::ChannelPinsUpdateEvent,
-    gateway::{
-        Activity,
-        Ready,
-    },
-    channel::{
-        Channel,
-        Message,
-    },
-    permissions::Permissions,
-};
-use serenity::framework::standard::{
-    Args,
-    StandardFramework,
-    CommandResult,
-    macros::{
-        command,
-        group,
-    },
-};
-use dotenv::dotenv;
-use typemap::Key;
 
-group!({
-    name: "general",
-    options: {
-        required_permissions: [
-            MANAGE_MESSAGES,
-        ],
-    },
-    commands: [
-        help,
-        info,
-        autoclear,
-        cancel_clear,
-        rules,
-    ],
-});
+#[group]
+#[commands(help, info, autoclear, cancel_clear, rules)]
+#[checks(permission_check)]
+struct General;
 
-struct Globals;
+async fn permission_check(ctx: &Context, msg: &&Message) -> CheckResult {
+    if let Some(guild_id) = msg.guild_id {
+        if let Ok(member) = guild_id.member(ctx.clone(), msg.author.id).await {
+            if let Ok(perms) = member.permissions(ctx).await {
+                if perms.manage_messages() || perms.manage_guild() || perms.administrator() {
+                    return CheckResult::Success
+                }
+            }
+        }
+    }
 
-impl Key for Globals {
-    type Value = mysql::Pool;
+    CheckResult::Failure(Reason::User(String::from("User needs `Manage Guild` permission")))
+}
+
+
+struct SQLPool;
+
+impl TypeMapKey for SQLPool {
+    type Value = Pool<MySqlConnection>;
 }
 
 struct Handler;
 
+#[serenity:async_trait]
 impl EventHandler for Handler {
-    fn ready(&self, context: Context, _: Ready) {
-        println!("Bot online now");
-
-        context.set_activity(Activity::playing("@Automaid help"));
-    }
-
-    fn channel_pins_update(&self, context: Context, pin: ChannelPinsUpdateEvent) {
+    async fn channel_pins_update(&self, context: Context, pin: ChannelPinsUpdateEvent) {
 
         let data = context.data.read();
-        let mysql = data.get::<Globals>().unwrap();
+        let mysql = data.get::<SQLPool>().unwrap();
 
         for pin in pin.channel_id.pins(&context).unwrap() {
             let id = pin.id;
@@ -74,14 +86,13 @@ impl EventHandler for Handler {
         }
     }
 
-    fn message(&self, ctx: Context, message: Message) {
+    async fn message(&self, ctx: Context, message: Message) {
 
         let c = message.channel_id;
 
-        if let Ok(Channel::Guild(guild_channel)) = c.to_channel(&ctx) {
+        if let Ok(Channel::Guild(guild_channel)) = c.to_channel(&ctx).await {
 
             let current_user_id = ctx.cache.read().user.id;
-            let guild_channel = guild_channel.read();
 
             let permissions = guild_channel.permissions_for_user(&ctx, current_user_id).unwrap();
 
@@ -98,7 +109,7 @@ impl EventHandler for Handler {
                 let m = user.id.as_u64();
 
                 let data = ctx.data.read();
-                let mysql = data.get::<Globals>().unwrap();
+                let mysql = data.get::<SQLPool>().unwrap();
 
                 let mut res = mysql.prep_exec(r#"SELECT timeout, message FROM channels WHERE channel = :id AND (user is null OR user = :u) AND timeout = (SELECT MIN(timeout) FROM channels WHERE channel = :id AND (user is null OR user = :u))"#, params!{"id" => c.as_u64(), "u" => m}).unwrap();
 
@@ -131,14 +142,11 @@ impl EventHandler for Handler {
     }
 }
 
-
-fn main() {
+#[tokio::main]
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
 
     let token = env::var("DISCORD_TOKEN").expect("token");
-    let sql_url = env::var("SQL_URL").expect("sql url");
-
-    let mut client = Client::new(&token, Handler).expect("Failed to create client");
 
     let user_id;
 
@@ -157,32 +165,68 @@ fn main() {
         }
     }
 
-    client.with_framework(
-        StandardFramework::new()
-            .configure(|c| c
-                .prefix("autoclear ")
-                .allow_dm(false)
-                .ignore_bots(true)
-                .ignore_webhooks(true)
-                .on_mention(Some(user_id))
-            )
-            .group(&GENERAL_GROUP)
-    );
 
-    let my = mysql::Pool::new(sql_url).unwrap();
+    let framework = StandardFramework::new()
+        .configure(|c| c
+            .dynamic_prefix(|ctx, msg| Box::pin(async move {
+                let pool = ctx.data.read().await
+                    .get::<SQLPool>().cloned().expect("Could not get SQLPool from data");
+
+                let guild = match msg.guild(&ctx.cache).await {
+                    Some(guild) => guild,
+
+                    None => {
+                        return Some(String::from("?"));
+                    }
+                };
+
+                match GuildData::get_from_id(*msg.guild_id.unwrap().as_u64(), pool.clone()).await {
+                    Some(mut guild_data) => {
+                        let name = Some(guild.name);
+
+                        if guild_data.name != name {
+                            guild_data.name = name;
+                            guild_data.commit(pool).await.unwrap();
+                        }
+                        Some(guild_data.prefix)
+                    },
+
+                    None => {
+                        GuildData::create_from_guild(guild, pool).await.unwrap();
+                        Some(String::from("?"))
+                    }
+                }
+            }))
+            .allow_dm(false)
+            .ignore_bots(true)
+            .ignore_webhooks(true)
+            .on_mention(user_id)
+        )
+        .group(&GENERAL_GROUPS)
+        .after(log_errors)
+        .on_dispatch_error(dispatch_error_hook);
+
+    let mut client = Client::new(&env::var("DISCORD_TOKEN").expect("Missing token from environment"))
+        .intents(GatewayIntents::GUILD_VOICE_STATES | GatewayIntents::GUILD_MESSAGES | GatewayIntents::GUILDS)
+        .framework(framework)
+        .event_handler(Handler)
+        .await.expect("Error occurred creating client");
 
     {
-        let mut data = client.data.write();
-        data.insert::<Globals>(my);
+        let pool = MySqlPool::new(&env::var("DATABASE_URL").expect("No database URL provided")).await.unwrap();
+
+        let mut data = client.data.write().await;
+        data.insert::<SQLPool>(pool);
+
     }
 
-    if let Err(e) = client.start_autosharded() {
-        println!("An error occured: {:?}", e);
-    }
+    client.start_autosharded().await?;
+
+    Ok(())
 }
 
 #[command("start")]
-fn autoclear(context: &mut Context, message: &Message, mut args: Args) -> CommandResult {
+async fn autoclear(context: &Context, message: &Message, mut args: Args) -> CommandResult {
     let mut timeout = 10;
 
     for arg in args.iter::<String>() {
@@ -198,25 +242,42 @@ fn autoclear(context: &mut Context, message: &Message, mut args: Args) -> Comman
 
     let msg = if to_send.is_empty() { None } else { Some(to_send) };
 
-    let c = message.channel_id;
+    let channel_id = message.channel_id;
 
-    let data = context.data.read();
-    let mysql = data.get::<Globals>().unwrap();
+    let pool = ctx.data.read().await
+        .get::<SQLPool>().cloned().expect("Could not get SQLPool from data");
 
-    let mn = &message.mentions;
+    let mentions = &message.mentions;
 
-    if mn.len() == 0 {
-        mysql.prep_exec(r#"DELETE FROM channels WHERE channel = :c AND user IS NULL"#, params!{"c" => c.as_u64()}).unwrap();
-        mysql.prep_exec(r#"INSERT INTO channels (channel, timeout, message) VALUES (:c, :t, :m)"#, params!{"c" => c.as_u64(), "t" => timeout, "m" => msg}).unwrap();
+    if mentions.len() == 0 {
+        sqlx::query!(
+            "
+DELETE FROM channels WHERE channel = ? AND user IS NULL;
+INSERT INTO channels (channel, timeout, message) VALUES (?, ?, ?);
+            ",
+            c.as_u64(), c.as_u64(),
+            timeout, msg
+        )
+            .execute(&pool)
+            .await?;
 
         let _ = message.reply(&context, "Autoclearing channel.");
     }
     else {
-        for mention in mn {
-            mysql.prep_exec(r#"DELETE FROM channels WHERE channel = :c AND user = :u"#, params!{"c" => c.as_u64(), "u" => mention.id.as_u64()}).unwrap();
-            mysql.prep_exec(r#"INSERT INTO channels (channel, user, timeout, message) VALUES (:c, :u, :t, :m)"#, params!{"c" => c.as_u64(), "u" => mention.id.as_u64(), "t" => timeout, "m" => msg}).unwrap();
+        for mention in mentions {
+            sqlx::query!(
+                "
+DELETE FROM channels WHERE channel = ? AND user = ?;
+INSERT INTO channels (channel, user, timeout, message) VALUES (?, ?, ?, ?);
+                ",
+                c.as_u64(), mention.id.as_u64(),
+                c.as_u64(), mention.id.as_u64(), timeout, msg
+            )
+            .execute(&pool)
+            .await?;
         }
-        let _ = message.reply(&context, &format!("Autoclearing {} users.", mn.len()));
+
+        let _ = message.reply(&context, &format!("Autoclearing {} users.", mentions.len()));
     }
 
     Ok(())
@@ -224,11 +285,11 @@ fn autoclear(context: &mut Context, message: &Message, mut args: Args) -> Comman
 
 
 #[command("stop")]
-fn cancel_clear(context: &mut Context, message: &Message) -> CommandResult {
+async fn cancel_clear(context: &Context, message: &Message) -> CommandResult {
     let c = message.channel_id;
 
     let data = context.data.read();
-    let mysql = data.get::<Globals>().unwrap();
+    let mysql = data.get::<SQLPool>().unwrap();
 
     let mn = &message.mentions;
 
@@ -249,14 +310,14 @@ fn cancel_clear(context: &mut Context, message: &Message) -> CommandResult {
 
 
 #[command("rules")]
-fn rules(context: &mut Context, message: &Message) -> CommandResult {
+fn rules(context: &Context, message: &Message) -> CommandResult {
     let c = message.channel_id;
 
     let mut out: Vec<String> = vec![];
 
     {
         let data = context.data.read();
-        let mysql = data.get::<Globals>().unwrap();
+        let mysql = data.get::<SQLPool>().unwrap();
 
         let res = mysql.prep_exec(r#"SELECT user, timeout FROM channels WHERE channel = :c"#, params!{"c" => c.as_u64()}).unwrap();
 
@@ -296,7 +357,7 @@ fn is_numeric(s: &String) -> bool {
 
 
 #[command]
-fn help(context: &mut Context, message: &Message) -> CommandResult {
+async fn help(context: &Context, message: &Message) -> CommandResult {
     let _ = message.channel_id.send_message(context, |m| {
         m.embed(|e| {
             e.title("Help")
@@ -320,7 +381,7 @@ fn help(context: &mut Context, message: &Message) -> CommandResult {
 
 
 #[command]
-fn info(context: &mut Context, message: &Message) -> CommandResult {
+async fn info(context: &Context, message: &Message) -> CommandResult {
     let _ = message.channel_id.send_message(context, |m| {
         m.embed(|e| {
             e.title("Info")
