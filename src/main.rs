@@ -83,63 +83,61 @@ DELETE FROM deletes WHERE message IN (?);
             .await.unwrap();
     }
 
-    async fn message(&self, ctx: Context, message: Message) {
+    async fn message(&self, context: Context, message: Message) {
 
-        let c = message.channel_id;
+        struct Row {
+            pub message: Option<String>,
+            pub timeout: u32,
+        }
 
-        if let Ok(Channel::Guild(guild_channel)) = c.to_channel(&ctx).await {
+        let channel_id = message.channel_id;
 
-            let current_user_id = ctx.cache.current_user().await.id;
+        if let Ok(Channel::Guild(guild_channel)) = channel_id.to_channel(&context).await {
 
-            let permissions = guild_channel.permissions_for_user(&ctx, current_user_id).await.unwrap();
+            let current_user_id = context.cache.current_user().await.id;
+
+            let permissions = guild_channel.permissions_for_user(&context, current_user_id).await.unwrap();
 
             if permissions.contains(Permissions::MANAGE_WEBHOOKS) && permissions.contains(Permissions::MANAGE_MESSAGES) {
 
-                dbg!("Permissions valid");
-
                 let user = match message.webhook_id {
-                    Some(w) => w.to_webhook(&ctx).await.unwrap().user.unwrap(),
+                    Some(w) => w.to_webhook(&context).await.unwrap().user.unwrap(),
 
                     None => message.author,
                 };
 
-                let m = user.id.as_u64();
+                let user_id = user.id.as_u64();
 
-                let pool = ctx.data.read().await
+                let pool = context.data.read().await
                     .get::<SQLPool>().cloned().expect("Could not get SQLPool from data");
 
-                let res = sqlx::query!(
+                let res = sqlx::query_as!(
+                    Row,
                     "
-SELECT timeout, message FROM channels WHERE channel = ? AND (user is null OR user = ?) AND timeout = (SELECT MIN(timeout) FROM channels WHERE channel = ? AND (user is null OR user = ?))
+SELECT timeout, message
+    FROM channels
+    WHERE channel = ? AND (user IS NULL OR user = ?)
+    ORDER BY timeout
+    LIMIT 1;
                     ",
-                    c.as_u64(), m, c.as_u64(), m
+                    channel_id.as_u64(), user_id
                 )
                     .fetch_one(&pool)
                     .await;
 
-                match res {
-                    Ok(row) => {
-                        let mut text = Some(row.message);
+                if let Ok(row) = res {
+                    let text = if user.bot { None } else { row.message };
 
-                        let msg = message.id;
+                    let msg = message.id;
 
-                        if user.bot {
-                            text = None;
-                        }
-
-                        sqlx::query!(
-                            "
-INSERT INTO deletes (channel, message, `time`, to_send) VALUES (?, ?, ADDDATE(NOW(), INTERVAL ? SECOND), ?)
-                            ",
-                            c.as_u64(), msg.as_u64(), row.timeout, text
-                        )
-                            .execute(&pool)
-                            .await.unwrap();
-
-                    },
-
-                    Err(_) =>
-                        return (),
+                    sqlx::query!(
+                        "
+INSERT INTO deletes (channel, message, time, to_send) VALUES (?, ?, ADDDATE(NOW(), INTERVAL ? SECOND), ?);
+                        ",
+                        channel_id.as_u64(), msg.as_u64(), row.timeout, text
+                    )
+                        .execute(&pool)
+                        .await.unwrap();
                 }
             }
         }
@@ -163,7 +161,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let framework = StandardFramework::new()
         .configure(|c| c
-            .prefix("autoclear")
+            .prefix("autoclear ")
             .allow_dm(false)
             .ignore_bots(true)
             .ignore_webhooks(true)
@@ -171,8 +169,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .group(&GENERAL_GROUP);
 
-    let mut client = Client::new(&env::var("DISCORD_TOKEN").expect("Missing token from environment"))
-        .intents(GatewayIntents::GUILD_VOICE_STATES | GatewayIntents::GUILD_MESSAGES | GatewayIntents::GUILDS)
+    let mut client = Client::new(&env::var("DISCORD_TOKEN").expect("Missing DISCORD_TOKEN from environment"))
+        .intents(GatewayIntents::GUILD_MESSAGES | GatewayIntents::GUILDS)
         .framework(framework)
         .event_handler(Handler)
         .await.expect("Error occurred creating client");
@@ -182,7 +180,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut data = client.data.write().await;
         data.insert::<SQLPool>(pool);
-
     }
 
     client.start_autosharded().await?;
@@ -336,12 +333,12 @@ SELECT user, timeout FROM channels WHERE channel = ?;
         }
     }
 
-    let _ = c.send_message(context, |m| m
+    c.send_message(context, |m| m
         .embed(|e| e
             .title("Rules")
             .description(out.join("\n"))
         )
-    );
+    ).await?;
 
     Ok(())
 }
