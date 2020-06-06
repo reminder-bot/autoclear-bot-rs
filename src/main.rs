@@ -146,7 +146,7 @@ INSERT INTO deletes (channel, message, time, to_send) VALUES (?, ?, ADDDATE(NOW(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    dotenv().ok();
+    dotenv()?;
 
     let token = env::var("DISCORD_TOKEN").expect("token");
 
@@ -157,7 +157,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         user_id = http_client.get_current_user().await.ok().map(|current_user| current_user.id);
     }
-
 
     let framework = StandardFramework::new()
         .configure(|c| c
