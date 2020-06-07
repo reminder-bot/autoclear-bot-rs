@@ -188,20 +188,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[command("start")]
 async fn autoclear(context: &Context, message: &Message, mut args: Args) -> CommandResult {
-    let mut timeout: u32 = 10;
+    #[derive(PartialEq)]
+    enum NamedArg {
+        NotProvided,
+        Next,
+        Provided(String)
+    }
 
-    for arg in args.iter::<String>() {
-        let a = arg.unwrap();
-
-        if is_numeric(&a) {
-            timeout = a.parse().unwrap();
-            break;
+    impl NamedArg {
+        fn ok(&self) -> Option<String> {
+            match self {
+                NamedArg::Provided(val) => {
+                    Some(val.to_string())
+                }
+                _ => {
+                    None
+                }
+            }
         }
     }
 
-    let to_send = args.rest();
+    let mut timeout: u32 = 10;
 
-    let msg = if to_send.is_empty() { None } else { Some(to_send) };
+    let mut regex: NamedArg = NamedArg::NotProvided;
+    let mut to_send: NamedArg = NamedArg::NotProvided;
+
+    for arg_res in args.iter::<String>() {
+        let arg = arg_res.unwrap().trim_matches('"').to_string();
+
+        if is_numeric(&arg) {
+            timeout = arg.parse().unwrap();
+        }
+        else if regex == NamedArg::Next {
+            regex = NamedArg::Provided(arg);
+        }
+        else if to_send == NamedArg::Next {
+            to_send = NamedArg::Provided(arg);
+        }
+        else {
+            match arg.as_str() {
+                "-r" | "--regex" => {
+                    regex = NamedArg::Next;
+                }
+
+                "-m" | "--message" => {
+                    to_send = NamedArg::Next;
+                }
+
+                _ => {}
+            }
+        }
+    }
 
     let channel_id = message.channel_id;
 
@@ -209,6 +246,8 @@ async fn autoclear(context: &Context, message: &Message, mut args: Args) -> Comm
         .get::<SQLPool>().cloned().expect("Could not get SQLPool from data");
 
     let mentions = &message.mentions;
+
+    println!("{:?}", regex.ok());
 
     if mentions.len() == 0 {
         sqlx::query!(
@@ -225,7 +264,7 @@ DELETE FROM channels WHERE channel = ? AND user IS NULL;
 INSERT INTO channels (channel, timeout, message) VALUES (?, ?, ?);
             ",
             channel_id.as_u64(),
-            timeout, msg
+            timeout, to_send.ok()
         )
             .execute(&pool)
             .await?;
@@ -247,7 +286,7 @@ DELETE FROM channels WHERE channel = ? AND user = ?;
                 "
 INSERT INTO channels (channel, user, timeout, message) VALUES (?, ?, ?, ?);
                 ",
-                channel_id.as_u64(), mention.id.as_u64(), timeout, msg
+                channel_id.as_u64(), mention.id.as_u64(), timeout, to_send.ok()
             )
                 .execute(&pool)
                 .await?;
