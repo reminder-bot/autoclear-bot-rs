@@ -4,7 +4,7 @@ CREATE TABLE autoclear.channels (
     `user` BIGINT UNSIGNED DEFAULT NULL,
     `timeout` INT UNSIGNED NOT NULL DEFAULT 10,
     `message` VARCHAR(2048),
-    `regex` VARCHAR(120),
+    `regex` VARCHAR(64),
 
     PRIMARY KEY (id),
     UNIQUE KEY (`channel`, `user`)

@@ -247,8 +247,6 @@ async fn autoclear(context: &Context, message: &Message, mut args: Args) -> Comm
 
     let mentions = &message.mentions;
 
-    println!("{:?}", regex.ok());
-
     if mentions.len() == 0 {
         sqlx::query!(
             "
@@ -284,9 +282,9 @@ DELETE FROM channels WHERE channel = ? AND user = ?;
 
             sqlx::query!(
                 "
-INSERT INTO channels (channel, user, timeout, message) VALUES (?, ?, ?, ?);
+INSERT INTO channels (channel, user, timeout, message, regex) VALUES (?, ?, ?, ?, ?);
                 ",
-                channel_id.as_u64(), mention.id.as_u64(), timeout, to_send.ok()
+                channel_id.as_u64(), mention.id.as_u64(), timeout, to_send.ok(), regex.ok()
             )
                 .execute(&pool)
                 .await?;
