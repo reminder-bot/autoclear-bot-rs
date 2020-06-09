@@ -432,22 +432,22 @@ async fn help(context: &Context, message: &Message) -> CommandResult {
         m.embed(|e| {
             e.title("Help")
             .description("`autoclear start` - Start autoclearing the current channel. Accepts arguments:
-\t* User mentions (users the clear applies to- if no mentions, will do all users)
-\t* Duration (time in seconds that messages should remain for- defaults to 10s)
-\t* Message (optional quoted with named specifier `-m`, message to send when a message is deleted)
-\t* Regex (optional quoted with named specifier `-r`, regex to use to evaluate which messages to delete. Max 64 characters, 4KB compiled)
+* User mentions (users the clear applies to- if no mentions, will do all users)
+* Duration (time in seconds that messages should remain for- defaults to 10s)
+* Message (optional quoted with named specifier `-m`, message to send when a message is deleted)
+* Regex (optional quoted with named specifier `-r`, regex to use to evaluate which messages to delete. Max 64 characters, 4KB compiled)
 
-\tE.g `autoclear start @JellyWX#0001 5`
+E.g `autoclear start @JellyWX#0001 5`
 *Using a message*
-`autoclear start 300 -m \"Message deleted after 5 minutes\"
+`autoclear start 300 -m \"Message deleted after 5 minutes\"`
 *Using a regex to clear up links*
-`autoclear start 1 -r \"(http://)|(https://)\" -m \"Links are banned in this channel\"
+`autoclear start 1 -r \"(http://)|(https://)\" -m \"Links are banned in this channel\"`
 
 `autoclear rules` - Check the autoclear rules for specified channels. Accepts arguments:
-\t* Channel mention (channel to view rules of- defaults to current)
+* Channel mention (channel to view rules of- defaults to current)
 
 `autoclear stop` - Cancel autoclearing on current channel. Accepts arguments:
-\t* User mentions (users to cancel autoclearing for- if no mentions, will do all users)")
+* User mentions (users to cancel autoclearing for- if no mentions, will do all users)")
         })
     }).await?;
 
