@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 dotenv = "0.15"
-serenity = {path = "/home/jude/serenity"}
+serenity = {git = "https://github.com/Lakelezz/serenity", branch = "await"}
 sqlx = {version = "0.3.5", default-features = false, features = ["runtime-tokio", "macros", "mysql", "bigdecimal"]}
-tokio = "0.2.19"
+tokio = {version = "0.2.19", features = ["blocking"]}
+regex = "1.3.9"

@@ -34,6 +34,8 @@ use dotenv::dotenv;
 
 use std::env;
 
+use regex::RegexBuilder;
+
 #[group]
 #[commands(help, info, autoclear, cancel_clear, rules)]
 #[checks(permission_check)]
@@ -85,11 +87,6 @@ DELETE FROM deletes WHERE message IN (?);
 
     async fn message(&self, context: Context, message: Message) {
 
-        struct Row {
-            pub message: Option<String>,
-            pub timeout: u32,
-        }
-
         let channel_id = message.channel_id;
 
         if let Ok(Channel::Guild(guild_channel)) = channel_id.to_channel(&context).await {
@@ -111,10 +108,9 @@ DELETE FROM deletes WHERE message IN (?);
                 let pool = context.data.read().await
                     .get::<SQLPool>().cloned().expect("Could not get SQLPool from data");
 
-                let res = sqlx::query_as!(
-                    Row,
+                let res = sqlx::query!(
                     "
-SELECT timeout, message
+SELECT timeout, message, regex
     FROM channels
     WHERE channel = ? AND (user IS NULL OR user = ?)
     ORDER BY timeout
@@ -126,18 +122,43 @@ SELECT timeout, message
                     .await;
 
                 if let Ok(row) = res {
-                    let text = if user.bot { None } else { row.message };
 
-                    let msg = message.id;
+                    let mut content_matched = true;
 
-                    sqlx::query!(
-                        "
+                    if let Some(match_str) = row.regex {
+                        use std::time::SystemTime;
+
+                        let start = SystemTime::now();
+
+                        match RegexBuilder::new(&match_str).size_limit(4096).build() {
+                            Ok(re) => {
+                                if re.find(&message.content).is_none() {
+                                    content_matched = false;
+                                }
+
+                                let end = SystemTime::now();
+
+                                println!("Regex `{}` evaluated on `{}` in {}ms", match_str, message.content, end.duration_since(start).unwrap().as_millis());
+                            }
+
+                            Err(e) => {
+                                println!("Regex `{}` failed to compile: {:?}", match_str, e);
+                            }
+                        }
+                    }
+
+                    if content_matched {
+                        let text = if user.bot { None } else { row.message };
+
+                        sqlx::query!(
+                            "
 INSERT INTO deletes (channel, message, time, to_send) VALUES (?, ?, ADDDATE(NOW(), INTERVAL ? SECOND), ?);
-                        ",
-                        channel_id.as_u64(), msg.as_u64(), row.timeout, text
-                    )
-                        .execute(&pool)
-                        .await.unwrap();
+                            ",
+                            channel_id.as_u64(), message.id.as_u64(), row.timeout, text
+                        )
+                            .execute(&pool)
+                            .await.unwrap();
+                    }
                 }
             }
         }
@@ -259,10 +280,10 @@ DELETE FROM channels WHERE channel = ? AND user IS NULL;
 
         sqlx::query!(
             "
-INSERT INTO channels (channel, timeout, message) VALUES (?, ?, ?);
+INSERT INTO channels (channel, timeout, message, regex) VALUES (?, ?, ?, ?);
             ",
             channel_id.as_u64(),
-            timeout, to_send.ok()
+            timeout, to_send.ok(), regex.ok()
         )
             .execute(&pool)
             .await?;
