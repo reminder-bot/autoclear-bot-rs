@@ -36,6 +36,8 @@ use std::env;
 
 use regex::RegexBuilder;
 
+static REGEX_SIZE_LIMIT: usize = 4096;
+
 #[group]
 #[commands(help, info, autoclear, cancel_clear, rules)]
 #[checks(permission_check)]
@@ -130,7 +132,7 @@ SELECT timeout, message, regex
 
                         let start = SystemTime::now();
 
-                        match RegexBuilder::new(&match_str).size_limit(4096).build() {
+                        match RegexBuilder::new(&match_str).size_limit(REGEX_SIZE_LIMIT).build() {
                             Ok(re) => {
                                 if re.find(&message.content).is_none() {
                                     content_matched = false;
@@ -267,6 +269,19 @@ async fn autoclear(context: &Context, message: &Message, mut args: Args) -> Comm
         .get::<SQLPool>().cloned().expect("Could not get SQLPool from data");
 
     let mentions = &message.mentions;
+
+    if let Some(match_str) = regex.ok() {
+        if match_str.len() > 64 {
+            message.reply(context, "Regex too long: regex must not exceed 64 characters in length").await?;
+
+            return Ok(())
+        }
+        else if RegexBuilder::new(&match_str).size_limit(REGEX_SIZE_LIMIT).build().is_err() {
+            message.reply(context, format!("Compiled regex too long: compiled regex must not exceed {} bytes in length", REGEX_SIZE_LIMIT)).await?;
+
+            return Ok(())
+        }
+    }
 
     if mentions.len() == 0 {
         sqlx::query!(
@@ -416,18 +431,23 @@ async fn help(context: &Context, message: &Message) -> CommandResult {
     message.channel_id.send_message(context, |m| {
         m.embed(|e| {
             e.title("Help")
-            .description("`autoclear start` - Start autoclearing the current channel. Accepts arguments:
+            .description(r#"`autoclear start` - Start autoclearing the current channel. Accepts arguments:
 \t* User mentions (users the clear applies to- if no mentions, will do all users)
 \t* Duration (time in seconds that messages should remain for- defaults to 10s)
-\t* Message (optional, message to send when a message is deleted)
+\t* Message (optional quoted with named specifier `-m`, message to send when a message is deleted)
+\t* Regex (optional quoted with named specifier `-r`, regex to use to evaluate which messages to delete. Max 64 characters, 4KB compiled)
 
 \tE.g `autoclear start @JellyWX#0001 5`
+*Using a message*
+`autoclear start 300 -m "Message deleted after 5 minutes"
+*Using a regex to clear up links*
+`autoclear start 1 -r "(http://)|(https://)" -m "Links are banned in this channel"
 
 `autoclear rules` - Check the autoclear rules for specified channels. Accepts arguments:
 \t* Channel mention (channel to view rules of- defaults to current)
 
 `autoclear stop` - Cancel autoclearing on current channel. Accepts arguments:
-\t* User mentions (users to cancel autoclearing for- if no mentions, will do all users)")
+\t* User mentions (users to cancel autoclearing for- if no mentions, will do all users)"#)
         })
     }).await?;
 
