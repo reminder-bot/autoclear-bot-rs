@@ -75,16 +75,21 @@ impl EventHandler for Handler {
         let pool = context.data.read().await
             .get::<SQLPool>().cloned().expect("Could not get SQLPool from data");
 
-        let all_ids = pin.channel_id.pins(&context).await.unwrap().iter().map(|pin| pin.id.as_u64().to_string()).collect::<Vec<String>>().join(",");
+        for id in pin.channel_id.pins(&context)
+                .await.unwrap()
+                .iter()
+                .map(|pin| (*pin.id.as_u64()).to_string())
+                .collect::<Vec<String>>() {
 
-        sqlx::query!(
-            "
-DELETE FROM deletes WHERE message IN (?);
-            ",
-            all_ids
-        )
-            .execute(&pool)
-            .await.unwrap();
+            sqlx::query!(
+                "
+DELETE FROM deletes WHERE message = ?
+                ",
+                id
+            )
+                .execute(&pool)
+                .await.unwrap();
+        }
     }
 
     async fn message(&self, context: Context, message: Message) {
