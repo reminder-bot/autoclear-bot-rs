@@ -52,9 +52,18 @@ async fn permission_check(ctx: &Context, msg: &Message) -> CheckResult {
                 if perms.manage_messages() || perms.manage_guild() || perms.administrator() {
                     return CheckResult::Success
                 }
+                else {
+                    println!("No perms on user {} (received perms {})", member.user.id, perms.bits);
+                }
             }
         }
     }
+
+    let _ = msg.channel_id.say(
+        ctx,
+        r#"You must have the `Manage Messages`, `Manage Server` or `Administrator` permission to use this command. You must also have 2FA enabled.
+
+Sometimes permission checking can be dodgy, all we can ask is that you get the server owner to set up the bot"#).await;
 
     CheckResult::Failure(Reason::User(String::from("User needs `Manage Guild` permission")))
 }
@@ -197,7 +206,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .group(&GENERAL_GROUP);
 
     let mut client = Client::new(&env::var("DISCORD_TOKEN").expect("Missing DISCORD_TOKEN from environment"))
-        .intents(GatewayIntents::GUILD_MESSAGES | GatewayIntents::GUILDS)
+        .intents(GatewayIntents::GUILD_MESSAGES | GatewayIntents::GUILD_WEBHOOKS | GatewayIntents::GUILDS)
         .framework(framework)
         .event_handler(Handler)
         .await.expect("Error occurred creating client");
