@@ -52,8 +52,15 @@ async fn permission_check(ctx: &Context, msg: &Message) -> CheckResult {
                 if perms.manage_messages() || perms.manage_guild() || perms.administrator() {
                     return CheckResult::Success
                 }
-                else {
-                    println!("No perms on user {} (received perms {})", member.user.id, perms.bits);
+            }
+
+            if let Some(roles) = member.roles(ctx).await {
+                if roles
+                        .iter()
+                        .filter(|r| r.permissions.manage_messages() || r.permissions.manage_guild() || r.permissions.administrator() )
+                        .next()
+                        .is_some() {
+                    return CheckResult::Success;
                 }
             }
         }
