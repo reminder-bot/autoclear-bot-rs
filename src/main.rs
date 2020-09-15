@@ -171,7 +171,7 @@ SELECT timeout, message, regex
                     }
 
                     if content_matched {
-                        let text = if user.bot { None } else { row.message };
+                        let text = if user.bot && !env::var("MESSAGE_ON_BOTS").map_or(false, |inner| inner == "1") { None } else { row.message };
 
                         sqlx::query!(
                             "
