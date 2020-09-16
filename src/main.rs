@@ -171,7 +171,15 @@ SELECT timeout, message, regex
                     }
 
                     if content_matched {
-                        let text = if user.bot && !env::var("MESSAGE_ON_BOTS").map_or(false, |inner| inner == "1") { None } else { row.message };
+                        let msg_on_bots = env::var("MESSAGE_ON_BOTS").map_or(false, |inner| inner == "1");
+                        let is_self_message = context.cache.current_user_id().await == user.id;
+
+                        let text = if (user.bot && !msg_on_bots) || is_self_message {
+                            None
+                        }
+                        else {
+                            row.message
+                        };
 
                         sqlx::query!(
                             "
