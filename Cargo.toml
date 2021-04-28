@@ -1,12 +1,12 @@
 [package]
 name = "autoclear-bot"
-version = "0.1.0"
-authors = ["jude-LafiteIII <judewrs@gmail.com>"]
+version = "0.2.0"
+authors = ["jude-LafiteIII <jude@jellywx.com>"]
 edition = "2018"
 
 [dependencies]
 dotenv = "0.15"
-serenity = {git = "https://github.com/Lakelezz/serenity", branch = "await"}
-sqlx = {version = "0.3.5", default-features = false, features = ["runtime-tokio", "macros", "mysql", "bigdecimal"]}
-tokio = {version = "0.2.19", features = ["blocking"]}
-regex = "1.3.9"
+serenity = "0.10"
+sqlx = { version = "0.5", default-features = false, features = ["runtime-tokio-rustls", "macros", "mysql", "bigdecimal"] }
+regex = "1.4"
+tokio = "1.5"

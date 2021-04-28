@@ -4,7 +4,7 @@ use serenity::{
         Client, Context,
     },
     framework::standard::{
-        Args, CommandResult, CheckResult, StandardFramework, Reason,
+        Args, CommandResult, StandardFramework, Reason,
         macros::{
             command, group, check,
         }
@@ -22,13 +22,7 @@ use serenity::{
     },
 };
 
-use sqlx::{
-    Pool,
-    mysql::{
-        MySqlPool,
-        MySqlConnection,
-    }
-};
+use sqlx::mysql::MySqlPool;
 
 use dotenv::dotenv;
 
@@ -45,12 +39,12 @@ struct General;
 
 #[check]
 #[name("permission_check")]
-async fn permission_check(ctx: &Context, msg: &Message) -> CheckResult {
+async fn permission_check(ctx: &Context, msg: &Message) -> Result<(), Reason> {
     if let Some(guild_id) = msg.guild_id {
         if let Ok(member) = guild_id.member(ctx.clone(), msg.author.id).await {
             if let Ok(perms) = member.permissions(ctx).await {
                 if perms.manage_messages() || perms.manage_guild() || perms.administrator() {
-                    return CheckResult::Success
+                    return Ok(())
                 }
             }
 
@@ -60,7 +54,7 @@ async fn permission_check(ctx: &Context, msg: &Message) -> CheckResult {
                         .filter(|r| r.permissions.manage_messages() || r.permissions.manage_guild() || r.permissions.administrator() )
                         .next()
                         .is_some() {
-                    return CheckResult::Success;
+                    return Ok(())
                 }
             }
         }
@@ -68,18 +62,16 @@ async fn permission_check(ctx: &Context, msg: &Message) -> CheckResult {
 
     let _ = msg.channel_id.say(
         ctx,
-        r#"You must have the `Manage Messages`, `Manage Server` or `Administrator` permission to use this command. You must also have 2FA enabled.
+        "You must have the `Manage Messages`, `Manage Server` or `Administrator` permission to use this command. You may also need 2FA enabled").await;
 
-Sometimes permission checking can be dodgy, all we can ask is that you get the server owner to set up the bot"#).await;
-
-    CheckResult::Failure(Reason::User(String::from("User needs `Manage Guild` permission")))
+    Err(Reason::User(String::from("User needs `Manage Guild` permission")))
 }
 
 
 struct SQLPool;
 
 impl TypeMapKey for SQLPool {
-    type Value = Pool<MySqlConnection>;
+    type Value = MySqlPool;
 }
 
 struct Handler;
@@ -220,14 +212,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .group(&GENERAL_GROUP);
 
-    let mut client = Client::new(&env::var("DISCORD_TOKEN").expect("Missing DISCORD_TOKEN from environment"))
+    let mut client = Client::builder(token)
         .intents(GatewayIntents::GUILD_MESSAGES | GatewayIntents::GUILD_WEBHOOKS | GatewayIntents::GUILDS)
         .framework(framework)
         .event_handler(Handler)
         .await.expect("Error occurred creating client");
 
     {
-        let pool = MySqlPool::new(&env::var("DATABASE_URL").expect("No database URL provided")).await.unwrap();
+        let pool = MySqlPool::connect(&env::var("DATABASE_URL").expect("No database URL provided")).await.unwrap();
 
         let mut data = client.data.write().await;
         data.insert::<SQLPool>(pool);
